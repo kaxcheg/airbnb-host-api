@@ -1,0 +1,23 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "airbnb-host-api"
+version = "0.0.3"
+dependencies = [
+    "selenium>=4.25",
+    "requests>=2.32.3",
+]
+requires-python = ">=3.12.5"
+authors = [
+  { name="kaxcheg", email="kaxcheg@gmail.com" },
+]
+description = "Simple native Airbnb API wrapper"
+readme = "README.md"
+license = { file = "LICENSE" }
+keywords = ['airbnb', 'API']
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
