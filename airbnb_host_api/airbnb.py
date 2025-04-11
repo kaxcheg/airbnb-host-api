@@ -20,10 +20,6 @@ class AuthTokenException(Exception):
     """Thrown when auth token could not be retrieved"""
     pass
 
-ELEMENT_WAIT_TIMEOUT = 2
-AUTH_TOKEN_WAIT_TIMEOUT = 5
-API_RESERVATION_ENTRIES_LIMIT = 40
-
 class Airbnb(SeleniumLogin):
     """
     Main Airbnb API class. 
