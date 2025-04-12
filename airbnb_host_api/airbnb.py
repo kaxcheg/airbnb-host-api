@@ -9,7 +9,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC 
 from selenium.common.exceptions import TimeoutException
 
-from .base import SeleniumLogin, InvalidParameterException
+from .base import BaseScraping, InvalidParameterError, AuthenticationError, ScrapingError, raise_if_blank, raise_auth_error_or_for_status, raise_scraping_error
 from . import airbnb_locators as locators
 
 class ApiKeyException(Exception):
@@ -20,7 +20,7 @@ class AuthTokenException(Exception):
     """Thrown when auth token could not be retrieved"""
     pass
 
-class Airbnb(SeleniumLogin):
+class Airbnb(BaseException):
     """
     Main Airbnb API class. 
     Provides access with login(email) and password to host reservations, fees and calendar.
@@ -62,7 +62,6 @@ class Airbnb(SeleniumLogin):
             password:str|None = None,
             auth_token:dict|None = None,
             api_key:str|None = None,
-            credentials_check:bool = True
             ) -> None:
         """
         Sets auth token and API key by running the Selenium driver to log in if needed, sets requests session parameters.
@@ -76,46 +75,48 @@ class Airbnb(SeleniumLogin):
         - credentials_check: set False to ignore credentials check in Selenium login (faster). Does not throw InvalidParameterException, 
         if invalid credentials are provided (in this case you will receive AuthTokenException or Selenium TimeoutException).
         """
-        # Get auth token and API key needed for native API Airbnb requests. 
-        if auth_token is None or api_key is None:
-            # Set credentials
-            self._email = email
-            self._password = password
-            # Set credentials check parameter
-            self._credentials_check = credentials_check
-            
-            try:
-                if browser_args is None:
-                    browser_args = [
-                        '--disable-gpu',
-                        '--headless',
-                    ]
-                # Login with Selenium and set auth token    
-                super().__init__(browser_args=browser_args, page_load_strategy=page_load_strategy)
-                # Set API key
-                if api_key is None:
-                    try:
-                        WebDriverWait(self.driver, ELEMENT_WAIT_TIMEOUT).until(
-                            EC.presence_of_element_located(locators.api_key_json_id)
-                        )
-                    except TimeoutException as e:
-                        raise ApiKeyException('API json data is not found') from e
-                    
-                    match = re.search(locators.api_key_re, self.driver.page_source)
-                    if match is not None and match.group(1):
-                        self._api_key = match.group(1)
-                    else:
-                        raise ApiKeyException("API key is not found in json data")
-                else:
-                    self._api_key = api_key
-            finally:
-                self.driver.quit()
-
-        else:
+        # init with nonblank auth data
+        if auth_token is not None and api_key is not None and email is None and password is None:
+            raise_if_blank({'auth_token': auth_token, 'api_key': api_key})
             self._auth_token = auth_token
-            self._api_key = api_key      
+            self._api_key = api_key
 
-        # Initializing requests session
+        # init with nonblank credentials
+        elif email is not None and password is not None and auth_token is None:
+            raise_if_blank({'email': email, 'password': password})
+            if api_key is not None:
+                raise_if_blank({'api_key': api_key})
+            
+            self._auth_token = None
+            # api_key is None or truthy
+            self._api_key = api_key
+
+            if browser_args is None:
+                browser_args = [
+                    '--disable-gpu',
+                    '--headless'
+                ]
+            
+            # login and setup auth data (auth_token, api_key if needed) with Selenium
+            super().__init__(
+                email=email,
+                password=password,
+                browser_args=browser_args, 
+                page_load_strategy=page_load_strategy,
+                )
+            
+        # other init options are wrong usage
+        else:
+            raise InvalidParameterError('Wrong usage: provide nonblank values for email, password and optional api_key OR '
+                'auth_token and api_key')
+        
+        # checking if attributes are truthy
+        if not self._auth_token:
+            raise ScrapingError('Scraping failed: auth_token value was not set.')
+        if not self._api_key:
+            raise ScrapingError('Scraping failed: api_key    value was not set.')
+
+        # Initializing requests session. Check what headers can be deleted
         self._session = requests.Session()
         self._session.headers = {
             "accept": "*/*",
