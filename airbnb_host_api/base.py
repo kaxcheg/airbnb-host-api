@@ -10,6 +10,22 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
 
+def raise_if_blank(args:dict):
+    for arg_name, arg in args.items():
+        if not arg:
+            raise InvalidParameterError(f'Wrong usage: {arg_name} cannot be blank.')
+        
+def raise_auth_error_or_for_status(response, status_reason:dict, msg:str):
+    if response.status_code in status_reason and status_reason[response.status_code] == response.reason:
+        raise AuthenticationError(msg)
+    else:
+        response.raise_for_status()
+        
+def raise_scraping_error(locators, original_exception, extra_raise_condition = None):
+    msg = f'{extra_raise_condition} and none of expected locators: {locators} were not found.' \
+        if extra_raise_condition else f'None of expected locators: {locators} were not found.'
+    raise ScrapingError(msg) from original_exception
+
 class InvalidParameterError(Exception):
     """Thrown if wrong usage option is used."""
     pass
