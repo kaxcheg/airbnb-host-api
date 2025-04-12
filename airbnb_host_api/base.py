@@ -7,8 +7,19 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
 
-class InvalidParameterException(Exception):
-    """Thrown when invalid credentials are provided or wrong method arguments usage"""
+class InvalidParameterError(Exception):
+    """Thrown if wrong usage option is used."""
+    pass
+
+class AuthenticationError(Exception):
+    """
+        Thrown if authentication error during scraping initialization (wrong credentials, too many OTP input attempts etc.) 
+        or if auth data is expired or nonvalid.
+    """
+    pass
+
+class ScrapingError(Exception):
+    """Thrown if expected selenium locators or auth data is not found."""
     pass
 
 class SeleniumLogin(ABC):
