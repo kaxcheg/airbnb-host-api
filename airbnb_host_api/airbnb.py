@@ -422,7 +422,7 @@ class Airbnb(BaseScraping):
         else:
             return all_reservations 
     
-    def get_host_fees(self, invoice_ids:list[str] = None, confirmation_code:str = None) -> dict:
+    def get_host_fees(self, invoice_ids:list[str] = None, confirmation_code:str = None, return_normalized = False) -> dict:
         """
         Returns dictionary with Decimals of base service fee, VAT and total service fee.
         One of two arguments, which could be obtained with get_reservations(), should be provided.
@@ -439,23 +439,27 @@ class Airbnb(BaseScraping):
         """
         def get_host_fees_from_invoice(invoice_id):
             response = self._session.get(locators.api_invoice_url+'/'+invoice_id)
-            response.raise_for_status()
+            raise_auth_error_or_for_status(response, {
+                    401: 'authentication_required', 
+                    400: 'invalid_key'},
+                    'auth_token or api_key are expired or nonvalid. Update running with an email and password.')
+            self._update_cookies()
 
             pattern = r"<td[^>]*>.*?(\d+\.\d+).*?</td>"
             matches = re.findall(pattern, response.text, re.S)
 
             if len(matches) == 3:
                 return {
-                    "base_service_fee": decimal.Decimal(matches[0]),
-                    "VAT": decimal.Decimal(matches[1]),
-                    "total_service_fee": decimal.Decimal(matches[2])
+                    "base_service_fee": Decimal(matches[0]),
+                    "VAT": Decimal(matches[1]),
+                    "total_service_fee": Decimal(matches[2])
                 }
             else:
-                raise RuntimeError(f"Unexpected response structure: expected 3 fee values, got {len(matches)}")
+                raise ScrapingError(f"Unexpected response structure: expected 3 fee values, got {len(matches)}")
         
         if invoice_ids is None:
             if confirmation_code is None:
-                raise InvalidParameterException('One of invoice_ids or confirmation_code arguments should be provided')
+                raise InvalidParameterError('One of invoice_ids or confirmation_code arguments should be provided')
             reservation = self.get_reservations(confirmation_code=confirmation_code)
             invoice_ids = reservation['invoice_ids']
 
@@ -470,10 +474,12 @@ class Airbnb(BaseScraping):
             total_fees['base_service_fee'] += fees['base_service_fee']
             total_fees['VAT'] += fees['VAT']
             total_fees['total_service_fee'] += fees['total_service_fee']
-        
-        return total_fees
+        if return_normalized:
+            return {key: str(val) for key, val in total_fees.items()}
+        else:
+            return total_fees
     
-    def get_calendar(self, listing_id:int):
+    def get_ics_calendar(self, listing_id:int):
         """
         Returns string in ics format with calendar events for listing_id, which could be obtained with get_reservations().
         Usage example::
@@ -486,10 +492,23 @@ class Airbnb(BaseScraping):
         }
 
         calendar_uri = self._session.get(locators.api_calendar_url+'/'+str(listing_id), params=params)
-        calendar_uri.raise_for_status()
+        raise_auth_error_or_for_status(calendar_uri, {
+                    401: 'authentication_required', 
+                    400: 'invalid_key'},
+                    'auth_token or api_key are expired or nonvalid. Update running with an email and password.')
+        self._update_cookies()
         calendar_uri_json = calendar_uri.json()
-        calendar = self._session.get(locators.api_base_url+calendar_uri_json['listing']['ical_uri'])
-        calendar.raise_for_status()
+        
+        try:
+            calendar = self._session.get(locators.api_base_url+calendar_uri_json['listing']['ical_uri'])
+        except (KeyError, JSONDecodeError) as e:
+            raise ValueError('Unexpected response.') from e
+        
+        raise_auth_error_or_for_status(calendar, {
+                    401: 'authentication_required', 
+                    400: 'invalid_key'},
+                    'auth_token or api_key are expired or nonvalid. Update running with an email and password.')
+        self._update_cookies()
 
         return calendar.text
 
