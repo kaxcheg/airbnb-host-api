@@ -11,6 +11,7 @@ from selenium.common.exceptions import TimeoutException
 
 from .base import BaseScraping, InvalidParameterError, AuthenticationError, ScrapingError, raise_if_blank, raise_auth_error_or_for_status, raise_scraping_error
 from . import airbnb_locators as locators
+from .config import ELEMENT_WAIT_TIMEOUT, SETUP_WAIT_TIMEOUT, RESERVATION_ENTRIES_LIMIT
 
 class ApiKeyException(Exception):
     """Thrown when native API data could not be retrieved"""
@@ -20,7 +21,7 @@ class AuthTokenException(Exception):
     """Thrown when auth token could not be retrieved"""
     pass
 
-class Airbnb(BaseException):
+class Airbnb(BaseScraping):
     """
     Main Airbnb API class. 
     Provides access with login(email) and password to host reservations, fees and calendar.
@@ -143,52 +144,93 @@ class Airbnb(BaseException):
         """Returns native Airbnb API key."""
         return self._api_key
     
-    def _email_login(self) -> dict:
+    def _email_login(self):
+        def setup(driver):
+            if not self._auth_token:
+                auth_token = driver.get_cookie(locators.auth_token_name)
+                if auth_token and 'value' in auth_token:
+                    auth_token[locators.auth_token_name] = auth_token['value']
+                    self._auth_token = auth_token
+
+            if not self._api_key:
+                match = re.search(locators.api_key_re, self.driver.page_source)
+                if match:
+                    self._api_key = match.group(1)
+
+            if self._auth_token and self._api_key:
+                return True
+            
+            return False
+
         driver = self.driver
         driver.get(locators.login_url)
         self._hide_cookies_window()
+
+        wait_for_element = WebDriverWait(driver, ELEMENT_WAIT_TIMEOUT)
        
-        WebDriverWait(driver, ELEMENT_WAIT_TIMEOUT).until(
-            EC.element_to_be_clickable(locators.email_button_xpath)
-            ).click()
+        try:
+            wait_for_element.until(EC.element_to_be_clickable(locators.email_button_xpath)).click()
+        except TimeoutException as e:
+            raise_scraping_error(locators.email_button_xpath, e)
 
-        WebDriverWait(driver, ELEMENT_WAIT_TIMEOUT).until(
-            EC.presence_of_element_located(locators.email_field_id)
-        ).send_keys(self._email)
-        WebDriverWait(driver, ELEMENT_WAIT_TIMEOUT).until(
-            EC.element_to_be_clickable(locators.continue_button_xpath)
-        ).click()
-        if self._credentials_check:
-            if self._is_locator_found(locator=locators.captcha_detected_id) or self._is_locator_found(locator=locators.invalid_email_domain_xpath):
-                raise InvalidParameterException('Wrong email.')
+        try:
+            wait_for_element.until(EC.presence_of_element_located(locators.email_field_id)).send_keys(self._email)
+        except TimeoutException as e:
+            raise_scraping_error(locators.email_field_id, e)
 
-        WebDriverWait(driver, ELEMENT_WAIT_TIMEOUT).until(
-            EC.presence_of_element_located(locators.password_field_id)
-        ).send_keys(self._password)
-        WebDriverWait(driver, ELEMENT_WAIT_TIMEOUT).until(
-            EC.element_to_be_clickable(locators.continue_button_xpath)
-        ).click()
-        if self._credentials_check:
-            if self._is_locator_found(locator=locators.invalid_password_len_id) or self._is_locator_found(locator=locators.invalid_password_css_selector):
-                raise InvalidParameterException('Wrong password.')
+
+        try:
+            wait_for_element.until(EC.element_to_be_clickable(locators.continue_button_xpath)).click()
+        except TimeoutException as e:
+            raise_scraping_error(locators.continue_button_xpath, e)
         
         try:
-            cookie = WebDriverWait(driver, AUTH_TOKEN_WAIT_TIMEOUT).until(lambda d: d.get_cookie(locators.auth_token_name))
+            send_email_result = wait_for_element.until(EC.any_of(
+                EC.presence_of_element_located(locators.password_field_id), 
+                EC.presence_of_element_located(locators.captcha_detected_id),
+                EC.presence_of_element_located(locators.invalid_email_domain_id)
+                ))
         except TimeoutException as e:
-            raise AuthTokenException(f'Auth token {locators.auth_token_name} is not found.') from e
+            raise_scraping_error((locators.password_field_id, locators.captcha_detected_id, locators.invalid_email_domain_id), e)
         
-        auth_token = {cookie['name']: cookie['value']}
-        return auth_token
+        if send_email_result.get_attribute('id') == locators.invalid_email_domain_id[1]:
+            raise AuthenticationError('Wrong email.')
+        
+        if send_email_result.get_attribute('id') == locators.captcha_detected_id[1]:
+            raise AuthenticationError('Captha detected.')
+        
+        password_field = send_email_result
+        del send_email_result
 
-    def _login(self) -> dict:
-        """Logs in with Selenium browser and returns auth token dict."""
-        if not self._email:
-            raise InvalidParameterException('Email cannot be empty.')
-        if not self._password:
-            raise InvalidParameterException('Password cannot be empty.')
+        password_field.send_keys(self._password)
 
-        auth_token = self._email_login()
-        return auth_token
+        try:
+            wait_for_element.until(EC.element_to_be_clickable(locators.continue_button_xpath)).click()
+        except TimeoutException as e:
+            raise_scraping_error(locators.continue_button_xpath, e)
+        
+        try:
+            signin_result = WebDriverWait(driver, SETUP_WAIT_TIMEOUT).until(
+                    lambda driver: setup(driver) or EC.any_of(
+                        EC.presence_of_element_located(locators.invalid_password_len_id),
+                        EC.presence_of_element_located(locators.invalid_password_css_selector)
+                    )(driver))
+        except TimeoutException as e:
+            raise_scraping_error((locators.invalid_password_len_id, locators.invalid_password_css_selector), e, extra_raise_condition='Failed to setup')
+
+        # setup was successfully run and returned bool type (True)
+        if isinstance(signin_result, bool):         
+            return
+        
+        elif signin_result.get_attribute('id') == locators.invalid_password_len_id[1]:
+            raise AuthenticationError('Wrong password. Invalid lengh.')
+            
+        elif signin_result.get_attribute('class') == locators.invalid_password_css_selector[1]:
+            raise AuthenticationError('Wrong password.')
+
+    def _login(self):
+        """Logs in and sets auth_token and api_key"""
+        self._email_login()
        
     def get_reservations(
             self,  
@@ -253,7 +295,7 @@ class Airbnb(BaseException):
             
             return reservation
         
-        limit = API_RESERVATION_ENTRIES_LIMIT
+        limit = RESERVATION_ENTRIES_LIMIT
     
         params = {
             "locale": "en-GB",
@@ -398,9 +440,7 @@ class Airbnb(BaseException):
             cookie_window = WebDriverWait(driver, ELEMENT_WAIT_TIMEOUT*10).until(
                 EC.presence_of_element_located(locators.cookies_window_xpath)
                 )
-            driver.execute_script("arguments[0].style.display = 'none';", cookie_window)
         except TimeoutException as e:
-            raise RuntimeError('Cookies consent window could not be found within timeout.') from e
-    
-    def _is_locator_found(self, locator:tuple, timeout:float=ELEMENT_WAIT_TIMEOUT):
-        return super()._is_locator_found(locator, timeout)
+            raise_scraping_error(locators.cookies_window_xpath, e)
+        
+        driver.execute_script("arguments[0].style.display = 'none';", cookie_window)
