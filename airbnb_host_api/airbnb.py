@@ -1,9 +1,10 @@
 """Simple API for host at Airbnb"""
-import decimal
+from decimal import Decimal, InvalidOperation
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 import requests
-from typing import Literal
+from requests.exceptions import JSONDecodeError
+from typing import Literal, TypedDict
 
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC 
@@ -12,6 +13,48 @@ from selenium.common.exceptions import TimeoutException
 from .base import BaseScraping, InvalidParameterError, AuthenticationError, ScrapingError, raise_if_blank, raise_auth_error_or_for_status, raise_scraping_error
 from . import airbnb_locators as locators
 from .config import ELEMENT_WAIT_TIMEOUT, SETUP_WAIT_TIMEOUT, RESERVATION_ENTRIES_LIMIT
+
+class AirbnbReservation(TypedDict):
+    confirmation_code: str
+    start_date: date
+    end_date: date
+    listing_id: int
+    listing_name: str
+    booked_date: date
+    nights: int
+    guest_name: str
+    contact: str
+    adults: int
+    children: int
+    infants: int
+    earnings: Decimal 
+    invoice_ids: list[str] 
+    status: str
+
+    @classmethod
+    def normalize(cls, reservation: "AirbnbReservation") -> dict[str, str|int|list]:
+        """
+          - date -> ISO (YYYY-MM-DD)
+          - Decimal -> str
+        """
+        return {
+            "confirmation_code": reservation["confirmation_code"],
+            "start_date": reservation["start_date"].isoformat(),
+            "end_date": reservation["end_date"].isoformat(),
+            "listing_id": reservation["listing_id"],
+            "listing_name": reservation["listing_name"],
+            "booked_date": reservation["booked_date"].isoformat(),
+            "nights": reservation["nights"],
+            "guest_name": reservation["guest_name"],
+            "contact": reservation["contact"],
+            "adults": reservation["adults"],
+            "children": reservation["children"],
+            "infants": reservation["infants"],
+            "earnings": str(reservation["earnings"]),
+            "invoice_ids": reservation["invoice_ids"],
+            "status": reservation["status"],
+        }
+
 
 class ApiKeyException(Exception):
     """Thrown when native API data could not be retrieved"""
@@ -238,8 +281,9 @@ class Airbnb(BaseScraping):
             listing_id:int = None, 
             date_min:str = None,   
             date_max:str = None,
-            confirmation_code:str=None
-            ) -> list[dict]|dict:
+            confirmation_code:str=None,
+            return_normalized = False
+            ) -> list[AirbnbReservation]|AirbnbReservation:
         """
         Returns list of reservation dictionaries or a dictionary, if confirmation_code is provided, in the following format::
 
@@ -255,7 +299,7 @@ class Airbnb(BaseScraping):
             "adults": int
             "children": int
             "infants": int
-            "earnings": str
+            "earnings": Decimal
             'invoice_ids': list[str]
             "status": str
 
@@ -274,24 +318,28 @@ class Airbnb(BaseScraping):
             api.get_reservations(status='completed', listing_id=1298761212340118374)
             api.get_reservations(date_min='2024-11-01', date_max='2025-01-15', status='canceled')
         """      
-        def process_reservation(entry):
-            reservation = {
-                "confirmation_code": entry["confirmation_code"],
-                "start_date": datetime.strptime(entry["start_date"], "%Y-%m-%d").date(),
-                "end_date": datetime.strptime(entry["end_date"], "%Y-%m-%d").date(),
-                'listing_id': entry['listing_id'],
-                "listing": entry["listing_name"],
-                "booked_date": datetime.strptime(entry["booked_date"], "%Y-%m-%d").date(),             
-                "nights": entry["nights"],
-                "guest_name": entry["guest_user"].get('full_name', entry["guest_user"]['first_name']),
-                "contact": re.sub(r'\s+', '', entry["guest_user"].get('phone', '')),
-                "adults": entry["guest_details"]['number_of_adults'],
-                "children": entry["guest_details"]['number_of_children'],
-                "infants": entry["guest_details"]['number_of_infants'],
-                "earnings": entry["earnings"].replace('\xa0', '').replace(',', ''),
-                'invoice_ids': [invoice['invoice_number'] for invoice in entry['host_vat_invoices']],
-                "status": entry["user_facing_status_localized"],
-                }
+        def process_reservation(entry: dict):
+            try:
+                reservation: AirbnbReservation = {
+                    "confirmation_code": entry["confirmation_code"],
+                    "start_date": datetime.strptime(entry["start_date"], "%Y-%m-%d").date(),
+                    "end_date": datetime.strptime(entry["end_date"], "%Y-%m-%d").date(),
+                    'listing_id': entry['listing_id'],
+                    "listing_name": entry["listing_name"],
+                    "booked_date": datetime.strptime(entry["booked_date"], "%Y-%m-%d").date(),             
+                    "nights": entry["nights"],
+                    "guest_name": entry["guest_user"].get('full_name', entry["guest_user"]['first_name']),
+                    "contact": re.sub(r'\s+', '', entry["guest_user"].get('phone', '')),
+                    "adults": entry["guest_details"]['number_of_adults'],
+                    "children": entry["guest_details"]['number_of_children'],
+                    "infants": entry["guest_details"]['number_of_infants'],
+                    "earnings": Decimal(entry["earnings"].replace('\xa0', '').replace(',', '')),
+                    'invoice_ids': [invoice['invoice_number'] for invoice in entry['host_vat_invoices']],
+                    "status": entry["user_facing_status_localized"],
+                    }
+                
+            except (KeyError, ValueError, InvalidOperation, IndexError) as e:
+                raise ValueError('Unexpected response.') from e        
             
             return reservation
         
@@ -343,25 +391,36 @@ class Airbnb(BaseScraping):
         offset = 0
         total_count = None
 
-        data = []
+        all_reservations = []
 
-        while total_count is None or offset < total_count:
-            params["_offset"] = offset
-            response = self._session.get(locators.api_reservations_url, params=params)
-            response.raise_for_status()
-            response_json = response.json()
+        try:
+            while total_count is None or offset < total_count:
+                params["_offset"] = offset
+                response = self._session.get(locators.api_reservations_url, params=params)
+                raise_auth_error_or_for_status(response, {
+                    401: 'authentication_required', 
+                    400: 'invalid_key'},
+                    'auth_token or api_key are expired or nonvalid. Update running with an email and password.')
+                self._update_cookies()
+                response_json = response.json()
 
-            for entry in response_json['reservations']:
-                reservation = process_reservation(entry=entry)
-                if confirmation_code is not None and reservation['confirmation_code'] == confirmation_code:
-                        return reservation
-                data.append(reservation)
+                for entry in response_json['reservations']:
+                    reservation = process_reservation(entry=entry)
+                    if confirmation_code is not None and reservation['confirmation_code'] == confirmation_code:
+                            return reservation
+                    all_reservations.append(reservation)
 
-            if total_count is None:
-                total_count = response_json['metadata']['total_count']
-            offset += limit
+                if total_count is None:
+                    total_count = response_json['metadata']['total_count']
+                offset += limit
+        except (KeyError, JSONDecodeError) as e:
+            raise ValueError('Unexpected response.') from e
 
-        return data
+        if return_normalized:
+            all_reservations_normalized = [AirbnbReservation.normalize(reservation) for reservation in all_reservations]
+            return all_reservations_normalized
+        else:
+            return all_reservations 
     
     def get_host_fees(self, invoice_ids:list[str] = None, confirmation_code:str = None) -> dict:
         """

@@ -10,6 +10,8 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
 
+from requests.utils import dict_from_cookiejar
+
 def raise_if_blank(args:dict):
     for arg_name, arg in args.items():
         if not arg:
@@ -84,6 +86,11 @@ class BaseScraping(ABC):
     def _login(self):
         """Stub method. Implement this method in child class."""
         pass
+    
+    def _update_cookies(self):
+        received_cookies = dict_from_cookiejar(self._session.cookies)
+        if received_cookies != self._cookies:
+            self._cookies = received_cookies
 
     def _is_locator_found(self, locator:tuple, timeout:float) -> bool:
         try:
