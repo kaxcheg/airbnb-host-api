@@ -175,3 +175,12 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+#private test data
+tests/private_data.json
+
+#vs code
+.vscode/
+
+#temp
+temp/
