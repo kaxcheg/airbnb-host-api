@@ -190,9 +190,10 @@ class Airbnb(BaseScraping):
     def _email_login(self):
         def setup(driver):
             if not self._auth_token:
-                auth_token = driver.get_cookie(locators.auth_token_name)
-                if auth_token and 'value' in auth_token:
-                    auth_token[locators.auth_token_name] = auth_token['value']
+                auth_token = {}
+                cookies = driver.get_cookie(locators.auth_token_name)
+                if cookies and 'value' in cookies:
+                    auth_token[locators.auth_token_name] = cookies['value']
                     self._auth_token = auth_token
 
             if not self._api_key:
