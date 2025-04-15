@@ -4,6 +4,7 @@ import re
 from datetime import datetime, timedelta, date
 import requests
 from requests.exceptions import JSONDecodeError
+from requests.utils import dict_from_cookiejar
 from typing import Literal, TypedDict
 
 from selenium.webdriver.support.ui import WebDriverWait
@@ -85,13 +86,13 @@ class Airbnb(BaseScraping):
 
         api = Airbnb(auth_token=auth_token, api_key=api_key)
 
-    If you get 401 error ("authentication_required"), while running get_reservations() or other requiring authentication methods, 
+    If you get 401 error ("Unauthorized"), while running get_reservations() or other requiring authentication methods, 
     update auth token::
 
         api = Airbnb(email='user@domain.com', password='qwerty', api_key=api_key) 
         new_auth_token = api.access_auth_token()
 
-    In case you get 400 error ("invalid_key" - this one should be rare), update API key (auth token will be also updated)::
+    In case you get 400 error ("Bad Request" - this one should be rare), update API key (auth token will be also updated)::
 
         api = Airbnb(email='user@domain.com', password='qwerty') 
         new_auth_token = api.access_auth_token()
@@ -158,23 +159,12 @@ class Airbnb(BaseScraping):
         if not self._auth_token:
             raise ScrapingError('Scraping failed: auth_token value was not set.')
         if not self._api_key:
-            raise ScrapingError('Scraping failed: api_key    value was not set.')
+            raise ScrapingError('Scraping failed: api_key value was not set.')
 
         # Initializing requests session. Check what headers can be deleted
         self._session = requests.Session()
         self._session.headers = {
-            "accept": "*/*",
-            "accept-encoding": "gzip, deflate, br, zstd",
-            "sec-ch-ua": "\"Google Chrome\";v=\"131\", \"Chromium\";v=\"131\", \"Not_A Brand\";v=\"24\"",
-            "sec-ch-ua-mobile": "?0",
-            "sec-ch-ua-platform": "\"Windows\"",
-            "sec-ch-ua-platform-version": "\"10.0.0\"",
-            "sec-fetch-dest": "empty",
-            "sec-fetch-mode": "cors",
             "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-            "x-airbnb-supports-airlock-v2": "true",
-            "x-csrf-token": "",
-            "x-csrf-without-token": "1"
         }
         self._session.cookies.update(self._auth_token)
         self._session.headers.update({locators.api_key_header_name: self._api_key})
@@ -275,7 +265,13 @@ class Airbnb(BaseScraping):
     def _login(self):
         """Logs in and sets auth_token and api_key"""
         self._email_login()
-       
+
+    def _update_auth_token_from_cookies(self):
+        all_cookies = dict_from_cookiejar(self._session.cookies)
+        auth_token = {name: value for name, value in all_cookies.items() if name == locators.auth_token_name}
+        if auth_token != self._auth_token:
+            self._auth_token = auth_token
+
     def get_reservations(
             self,  
             status: Literal['upcoming','completed','canceled','all']='all',
@@ -334,7 +330,7 @@ class Airbnb(BaseScraping):
                     "adults": entry["guest_details"]['number_of_adults'],
                     "children": entry["guest_details"]['number_of_children'],
                     "infants": entry["guest_details"]['number_of_infants'],
-                    "earnings": Decimal(entry["earnings"].replace('\xa0', '').replace(',', '')),
+                    "earnings": Decimal(entry["earnings"].replace('\xa0', '').replace('\u20AC', '').replace(',', '')),
                     'invoice_ids': [invoice['invoice_number'] for invoice in entry['host_vat_invoices']],
                     "status": entry["user_facing_status_localized"],
                     }
@@ -399,10 +395,10 @@ class Airbnb(BaseScraping):
                 params["_offset"] = offset
                 response = self._session.get(locators.api_reservations_url, params=params)
                 raise_auth_error_or_for_status(response, {
-                    401: 'authentication_required', 
-                    400: 'invalid_key'},
+                    401: 'Unauthorized', 
+                    400: 'Bad Request'},
                     'auth_token or api_key are expired or nonvalid. Update running with an email and password.')
-                self._update_cookies()
+                self._update_auth_token_from_cookies()
                 response_json = response.json()
 
                 for entry in response_json['reservations']:
@@ -441,10 +437,10 @@ class Airbnb(BaseScraping):
         def get_host_fees_from_invoice(invoice_id):
             response = self._session.get(locators.api_invoice_url+'/'+invoice_id)
             raise_auth_error_or_for_status(response, {
-                    401: 'authentication_required', 
-                    400: 'invalid_key'},
+                    401: 'Unauthorized', 
+                    400: 'Bad Request'},
                     'auth_token or api_key are expired or nonvalid. Update running with an email and password.')
-            self._update_cookies()
+            self._update_auth_token_from_cookies()
 
             pattern = r"<td[^>]*>.*?(\d+\.\d+).*?</td>"
             matches = re.findall(pattern, response.text, re.S)
@@ -494,11 +490,14 @@ class Airbnb(BaseScraping):
 
         calendar_uri = self._session.get(locators.api_calendar_url+'/'+str(listing_id), params=params)
         raise_auth_error_or_for_status(calendar_uri, {
-                    401: 'authentication_required', 
-                    400: 'invalid_key'},
+                    401: 'Unauthorized', 
+                    400: 'Bad Request'},
                     'auth_token or api_key are expired or nonvalid. Update running with an email and password.')
-        self._update_cookies()
-        calendar_uri_json = calendar_uri.json()
+        self._update_auth_token_from_cookies()
+        try:
+            calendar_uri_json = calendar_uri.json()
+        except JSONDecodeError as e:
+            raise ValueError('Unexpected response.') from e
         
         try:
             calendar = self._session.get(locators.api_base_url+calendar_uri_json['listing']['ical_uri'])
@@ -506,10 +505,10 @@ class Airbnb(BaseScraping):
             raise ValueError('Unexpected response.') from e
         
         raise_auth_error_or_for_status(calendar, {
-                    401: 'authentication_required', 
-                    400: 'invalid_key'},
+                    401: 'Unauthorized', 
+                    400: 'Bad Request'},
                     'auth_token or api_key are expired or nonvalid. Update running with an email and password.')
-        self._update_cookies()
+        self._update_auth_token_from_cookies()
 
         return calendar.text
 
