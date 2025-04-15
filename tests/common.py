@@ -13,8 +13,6 @@ captcha_email = 'email@gmail.com'
 some_password = 'pass'
 some_auth_token = {locators.auth_token_name: 'some_value'}
 some_api_key = 'some_value'
-# some_property_id = 12345678
-
 
 def compare_dicts(dict1: dict, dict2: dict, dict1_name, dict2_name) -> None:
     """

@@ -6,112 +6,49 @@
     "get_reservations_cases": [
         {
             "case_num": 1,
-            "date_min": "2024-09-01",
-            "date_max": "2025-02-19",
-            "date_of": "reservation",
-            "property_id": 12345678,
-            "show_ok": true,
-            "show_canceled": true,
-            "show_no_show": true,
-            "only_paid_online": true,
-            "only_pending_request": false,
-            "only_smart_flex": false,
-            "only_corporate_card": false,
-            "only_invoice_required": false,
-            "keywords": "",
+            "date_min": "2024-11-01",
+            "date_max": "2025-04-01",
             "return_normalized": true,
-            "expected_number": 37,
+            "expected_number": 16,
             "expected_reservations": [
                 {
-                    "status": "ok",
+                    "confirmation_code": "confirmation_code",
+                    "start_date": "2024-11-01",
+                    "end_date": "2024-11-08",
+                    "listing_id": 8954761212790568374,
+                    "listing_name": "listing_name",
+                    "booked_date": "2024-09-01",
+                    "nights": 7,
                     "guest_name": "guest_name",
-                    "checkin": "2024-10-03",
-                    "checkout": "2024-10-07",
-                    "booked_date": "2024-09-27",
-                    "currency": "EUR",
-                    "id": "1234567890",
+                    "contact": "+1234567890",
                     "adults": 2,
-                    "children": null,
-                    "property_id": 12345678,
-                    "total_price": "272.00",
-                    "fee": "43.79",
-                    "property_name": "property_name",
-                    "rooms": [
-                        {
-                            "quantity": 1,
-                            "name": "Two-Bedroom Apartment"
-                        }
-                    ]
-                }
-            ]
-        },
-        {
-            "case_num": 2,
-            "date_min": "2024-09-01",
-            "date_max": "2025-02-19",
-            "date_of": "reservation",
-            "property_id": 12345678,
-            "show_ok": false,
-            "show_canceled": false,
-            "show_no_show": true,
-            "only_paid_online": false,
-            "only_pending_request": false,
-            "only_smart_flex": false,
-            "only_corporate_card": false,
-            "only_invoice_required": false,
-            "keywords": "",
-            "return_normalized": true,
-            "expected_number": 12,
-            "expected_reservations": [
-                {
-                    "status": "ok",
-                    "guest_name": "guest_name",
-                    "checkin": "2024-10-03",
-                    "checkout": "2024-10-07",
-                    "booked_date": "2024-09-27",
-                    "currency": "EUR",
-                    "id": "1234567890",
-                    "adults": 2,
-                    "children": null,
-                    "property_id": 12345678,
-                    "total_price": "272.00",
-                    "fee": "43.79",
-                    "property_name": "property_name",
-                    "rooms": [
-                        {
-                            "quantity": 1,
-                            "name": "Two-Bedroom Apartment"
-                        }
-                    ]
+                    "children": 1,
+                    "infants": 0,
+                    "earnings": "100.00",
+                    "invoice_ids": ["9874404123"],
+                    "status": "Confirmed"
                 }
             ]
         }
     ],
-    "get_phone_cases": [
+    "get_host_fees_cases": [
         {
             "case_num": 1,
-            "booking_id": "1234567890",
-            "property_id": 12345678,
-            "phone": "+33123456789"
-        }
-    ],
-    "get_payout_cases": [
-        {
-            "case_num": 1,
-            "booking_id": "1234567890",
-            "property_id": 12345678,
+            "invoice_ids": [
+                "1234646789"
+            ],
             "return_normalized": true,
-            "payout": "219.01"
+            "expected_fees": {
+                "base_service_fee": "46.04",
+                "VAT": "9.67",
+                "total_service_fee": "55.71"
+            }
         }
     ],
-    "expected_properties": [
+    "expected_calendar_case": [
         {
-            "id": 12345678,
-            "name": "property_name"
+            "case_num": 1,
+            "listing_id": 1234561237767818334
         }
-    ],
-    "expected_calendar_case": {
-        "property_id": 12345678,
-        "room_id": "01"
-    }
+    ]
 }
